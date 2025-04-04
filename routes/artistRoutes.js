@@ -6,10 +6,10 @@ const admin = require('../middleware/admin');
 const { upload } = require('../utils/storage');
 
 // API routes
-router.get('/', getArtists); // Ai cũng xem được
-router.get('/:id', getArtist); // Ai cũng xem được
-router.post('/', auth, admin, upload.single('image'), addArtist); // Chỉ Admin
-router.put('/:id', auth, admin, upload.single('image'), updateArtist); // Chỉ Admin
-router.delete('/:id', auth, admin, deleteArtist); // Chỉ Admin
+router.get('/', getArtists);
+router.get('/:id', getArtist);
+router.post('/', auth, admin, upload.single('image'), addArtist);
+router.put('/:id', auth, admin, upload.single('image'), updateArtist);
+router.delete('/:id', auth, admin, deleteArtist);
 
 module.exports = router;
