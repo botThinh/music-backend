@@ -1,9 +1,14 @@
 const Song = require('../models/Song');
-const { uploadToCloudinary } = require('../utils/storage'); // Sử dụng module storage
+const Artist = require('../models/Artist');
+const Album = require('../models/Album');
+const { uploadToCloudinary } = require('../utils/storage');
 
 const getSongs = async (req, res) => {
     try {
-        const songs = await Song.find().populate('uploadedBy', 'username');
+        const songs = await Song.find()
+            .populate('artist', 'name')
+            .populate('album', 'title')
+            .populate('uploadedBy', 'username');
         res.json(songs);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -12,7 +17,10 @@ const getSongs = async (req, res) => {
 
 const getSong = async (req, res) => {
     try {
-        const song = await Song.findById(req.params.id).populate('uploadedBy', 'username');
+        const song = await Song.findById(req.params.id)
+            .populate('artist', 'name')
+            .populate('album', 'title')
+            .populate('uploadedBy', 'username');
         if (!song) return res.status(404).json({ message: 'Song not found' });
         res.json(song);
     } catch (error) {
@@ -21,12 +29,27 @@ const getSong = async (req, res) => {
 };
 
 const addSong = async (req, res) => {
-    const { title, artist, duration } = req.body;
+    const { title, artist, album, duration } = req.body;
 
     try {
         // Kiểm tra file MP3 và ảnh
         if (!req.files || !req.files.file || !req.files.thumbnail) {
             return res.status(400).json({ message: 'Both MP3 file and thumbnail are required' });
+        }
+
+        // Kiểm tra nghệ sĩ có tồn tại không
+        const artistExists = await Artist.findById(artist);
+        if (!artistExists) return res.status(404).json({ message: 'Artist not found' });
+
+        // Kiểm tra album nếu có
+        let albumExists = null;
+        if (album) {
+            albumExists = await Album.findById(album);
+            if (!albumExists) return res.status(404).json({ message: 'Album not found' });
+            // Kiểm tra album có thuộc nghệ sĩ không
+            if (albumExists.artist.toString() !== artist) {
+                return res.status(400).json({ message: 'Album does not belong to this artist' });
+            }
         }
 
         // Upload file MP3 và ảnh lên Cloudinary
@@ -37,6 +60,7 @@ const addSong = async (req, res) => {
         const song = new Song({
             title,
             artist,
+            album: album || null,
             url: mp3Url,
             thumbnail: thumbnailUrl,
             duration,
@@ -51,7 +75,7 @@ const addSong = async (req, res) => {
 };
 
 const updateSong = async (req, res) => {
-    const { title, artist, duration } = req.body;
+    const { title, artist, album, duration } = req.body;
 
     try {
         const song = await Song.findById(req.params.id);
@@ -62,8 +86,27 @@ const updateSong = async (req, res) => {
 
         // Cập nhật thông tin cơ bản
         if (title) song.title = title;
-        if (artist) song.artist = artist;
         if (duration) song.duration = duration;
+
+        // Cập nhật nghệ sĩ nếu có
+        if (artist) {
+            const artistExists = await Artist.findById(artist);
+            if (!artistExists) return res.status(404).json({ message: 'Artist not found' });
+            song.artist = artist;
+        }
+
+        // Cập nhật album nếu có
+        if (album) {
+            const albumExists = await Album.findById(album);
+            if (!albumExists) return res.status(404).json({ message: 'Album not found' });
+            // Kiểm tra album có thuộc nghệ sĩ không
+            if (albumExists.artist.toString() !== (artist || song.artist).toString()) {
+                return res.status(400).json({ message: 'Album does not belong to this artist' });
+            }
+            song.album = album;
+        } else if (album === null) {
+            song.album = null; // Xóa album nếu gửi album=null
+        }
 
         // Nếu có file MP3 mới
         if (req.files && req.files.file) {
@@ -124,10 +167,37 @@ const searchSongs = async (req, res) => {
         const songs = await Song.find({
             $or: [
                 { title: { $regex: q, $options: 'i' } },
-                { artist: { $regex: q, $options: 'i' } },
             ],
+        })
+            .populate('artist', 'name')
+            .populate('album', 'title');
+
+        // Tìm kiếm theo tên nghệ sĩ
+        const artists = await Artist.find({
+            name: { $regex: q, $options: 'i' },
         });
-        res.json(songs);
+        const artistSongs = await Song.find({
+            artist: { $in: artists.map(artist => artist._id) },
+        })
+            .populate('artist', 'name')
+            .populate('album', 'title');
+
+        // Tìm kiếm theo album
+        const albums = await Album.find({
+            title: { $regex: q, $options: 'i' },
+        });
+        const albumSongs = await Song.find({
+            album: { $in: albums.map(album => album._id) },
+        })
+            .populate('artist', 'name')
+            .populate('album', 'title');
+
+        // Gộp kết quả và loại bỏ trùng lặp
+        const allSongs = [...songs, ...artistSongs, ...albumSongs];
+        const uniqueSongs = Array.from(new Set(allSongs.map(song => song._id.toString())))
+            .map(id => allSongs.find(song => song._id.toString() === id));
+
+        res.json(uniqueSongs);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
