@@ -1,18 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const { getSongs, getSong, addSong, searchSongs } = require('../controllers/songController');
+const { getSongs, getSong, addSong, updateSong, deleteSong, searchSongs } = require('../controllers/songController');
 const auth = require('../middleware/auth');
-const multer = require('multer');
+const { upload } = require('../utils/storage'); // Sử dụng module storage
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, 'uploads/'),
-    filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
-});
-const upload = multer({ storage });
-
+// API routes
 router.get('/', getSongs);
 router.get('/:id', getSong);
-router.post('/', auth, upload.single('file'), addSong);
+router.post('/', auth, upload.fields([{ name: 'file' }, { name: 'thumbnail' }]), addSong);
+router.put('/:id', auth, upload.fields([{ name: 'file' }, { name: 'thumbnail' }]), updateSong);
+router.delete('/:id', auth, deleteSong);
 router.get('/search', searchSongs);
 
 module.exports = router;

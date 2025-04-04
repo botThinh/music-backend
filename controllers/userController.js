@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { uploadToCloudinary } = require('../utils/storage'); // Sử dụng module storage
 
 const register = async (req, res) => {
     const { username, email, password } = req.body;
@@ -47,4 +48,24 @@ const getProfile = async (req, res) => {
     }
 };
 
-module.exports = { register, login, getProfile };
+const updateAvatar = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'No file uploaded' });
+        }
+
+        // Upload ảnh đại diện lên Cloudinary
+        const avatarUrl = await uploadToCloudinary(req.file.path, 'image');
+
+        // Cập nhật avatar của user
+        const user = await User.findById(req.user.id);
+        user.avatar = avatarUrl;
+        await user.save();
+
+        res.json({ avatar: avatarUrl });
+    } catch (error) {
+        res.status(400).json({ message: error.message });
+    }
+};
+
+module.exports = { register, login, getProfile, updateAvatar };
