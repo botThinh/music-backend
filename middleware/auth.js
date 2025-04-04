@@ -1,19 +1,18 @@
 const jwt = require('jsonwebtoken');
-const { getToken } = require('../utils/tokenStorage'); // Import getToken
 
-const auth = (req, res, next) => {
-    let token = req.header('x-auth-token');
+const auth = async (req, res, next) => {
+    // Lấy token từ cookie hoặc header
+    const token = req.cookies['auth-token'] || req.header('x-auth-token');
 
-    // Nếu không có token trong header, thử lấy từ tokenStorage (dành cho test)
-    if (!token && req.query.userId) {
-        token = getToken(req.query.userId);
-    }
+    console.log('Token from cookie:', req.cookies['auth-token']); // Debug
+    console.log('Token from header:', req.header('x-auth-token')); // Debug
 
     if (!token) return res.status(401).json({ message: 'No token, authorization denied' });
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         req.user = decoded.user;
+        console.log('Decoded user:', req.user); // Debug
         next();
     } catch (error) {
         res.status(401).json({ message: 'Token is not valid' });

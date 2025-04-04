@@ -7,17 +7,19 @@ const playlistRoutes = require('./routes/playlistRoutes');
 const artistRoutes = require('./routes/artistRoutes');
 const albumRoutes = require('./routes/albumRoutes');
 const path = require('path');
+const cookieParser = require('cookie-parser'); // Thêm cookie-parser
 
 dotenv.config();
 connectDB();
 
 const app = express();
-app.use(express.json());
 
-// Serve static files (nếu cần)
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser()); // Thêm middleware cookie-parser
+
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Routes
 app.use('/api/users', userRoutes);
 app.use('/api/songs', songRoutes);
 app.use('/api/playlists', playlistRoutes);

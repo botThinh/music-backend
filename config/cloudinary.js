@@ -1,3 +1,5 @@
+require('dotenv').config(); // Load biến môi trường trước
+
 const cloudinary = require('cloudinary').v2;
 
 cloudinary.config({
