@@ -10,8 +10,8 @@ router.post('/register', register);
 router.post('/login', login);
 router.get('/profile', auth, getProfile);
 router.post('/avatar', auth, upload.single('avatar'), updateAvatar);
-router.get('/', auth, admin, getUsers); // Chỉ Admin
-router.delete('/:id', auth, admin, deleteUser); // Chỉ Admin
-router.put('/:id/role', auth, admin, updateUserRole); // Chỉ Admin
+router.get('/', auth, admin, getUsers);
+router.delete('/:id', auth, admin, deleteUser);
+router.put('/:id/role', auth, admin, updateUserRole);
 
 module.exports = router;
