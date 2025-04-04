@@ -32,31 +32,25 @@ const addSong = async (req, res) => {
     const { title, artist, album, duration } = req.body;
 
     try {
-        // Kiểm tra file MP3 và ảnh
         if (!req.files || !req.files.file || !req.files.thumbnail) {
             return res.status(400).json({ message: 'Both MP3 file and thumbnail are required' });
         }
 
-        // Kiểm tra nghệ sĩ có tồn tại không
         const artistExists = await Artist.findById(artist);
         if (!artistExists) return res.status(404).json({ message: 'Artist not found' });
 
-        // Kiểm tra album nếu có
         let albumExists = null;
         if (album) {
             albumExists = await Album.findById(album);
             if (!albumExists) return res.status(404).json({ message: 'Album not found' });
-            // Kiểm tra album có thuộc nghệ sĩ không
             if (albumExists.artist.toString() !== artist) {
                 return res.status(400).json({ message: 'Album does not belong to this artist' });
             }
         }
 
-        // Upload file MP3 và ảnh lên Cloudinary
         const mp3Url = await uploadToCloudinary(req.files.file[0].path, 'mp3');
         const thumbnailUrl = await uploadToCloudinary(req.files.thumbnail[0].path, 'image');
 
-        // Tạo bài hát mới
         const song = new Song({
             title,
             artist,
@@ -80,52 +74,42 @@ const updateSong = async (req, res) => {
     try {
         const song = await Song.findById(req.params.id);
         if (!song) return res.status(404).json({ message: 'Song not found' });
-        if (song.uploadedBy.toString() !== req.user.id) {
+
+        // Kiểm tra quyền sở hữu (middleware ownerOrAdmin đã cho phép Admin tiếp tục)
+        if (req.user.role !== 'admin' && song.uploadedBy.toString() !== req.user.id) {
             return res.status(403).json({ message: 'Not authorized to update this song' });
         }
 
-        // Cập nhật thông tin cơ bản
         if (title) song.title = title;
         if (duration) song.duration = duration;
 
-        // Cập nhật nghệ sĩ nếu có
         if (artist) {
             const artistExists = await Artist.findById(artist);
             if (!artistExists) return res.status(404).json({ message: 'Artist not found' });
             song.artist = artist;
         }
 
-        // Cập nhật album nếu có
         if (album) {
             const albumExists = await Album.findById(album);
             if (!albumExists) return res.status(404).json({ message: 'Album not found' });
-            // Kiểm tra album có thuộc nghệ sĩ không
             if (albumExists.artist.toString() !== (artist || song.artist).toString()) {
                 return res.status(400).json({ message: 'Album does not belong to this artist' });
             }
             song.album = album;
         } else if (album === null) {
-            song.album = null; // Xóa album nếu gửi album=null
+            song.album = null;
         }
 
-        // Nếu có file MP3 mới
         if (req.files && req.files.file) {
-            // Xóa file MP3 cũ trên Cloudinary
             const oldMp3PublicId = song.url.split('/').pop().split('.')[0];
             await cloudinary.uploader.destroy(`music-app/songs/${oldMp3PublicId}`, { resource_type: 'video' });
-
-            // Upload file MP3 mới
             const mp3Url = await uploadToCloudinary(req.files.file[0].path, 'mp3');
             song.url = mp3Url;
         }
 
-        // Nếu có ảnh mới
         if (req.files && req.files.thumbnail) {
-            // Xóa ảnh cũ trên Cloudinary
             const oldThumbnailPublicId = song.thumbnail.split('/').pop().split('.')[0];
             await cloudinary.uploader.destroy(`music-app/thumbnails/${oldThumbnailPublicId}`);
-
-            // Upload ảnh mới
             const thumbnailUrl = await uploadToCloudinary(req.files.thumbnail[0].path, 'image');
             song.thumbnail = thumbnailUrl;
         }
@@ -141,19 +125,18 @@ const deleteSong = async (req, res) => {
     try {
         const song = await Song.findById(req.params.id);
         if (!song) return res.status(404).json({ message: 'Song not found' });
-        if (song.uploadedBy.toString() !== req.user.id) {
+
+        // Kiểm tra quyền sở hữu (middleware ownerOrAdmin đã cho phép Admin tiếp tục)
+        if (req.user.role !== 'admin' && song.uploadedBy.toString() !== req.user.id) {
             return res.status(403).json({ message: 'Not authorized to delete this song' });
         }
 
-        // Xóa file MP3 trên Cloudinary
         const mp3PublicId = song.url.split('/').pop().split('.')[0];
         await cloudinary.uploader.destroy(`music-app/songs/${mp3PublicId}`, { resource_type: 'video' });
 
-        // Xóa ảnh trên Cloudinary
         const thumbnailPublicId = song.thumbnail.split('/').pop().split('.')[0];
         await cloudinary.uploader.destroy(`music-app/thumbnails/${thumbnailPublicId}`);
 
-        // Xóa bài hát khỏi database
         await song.remove();
         res.json({ message: 'Song deleted' });
     } catch (error) {
@@ -172,7 +155,6 @@ const searchSongs = async (req, res) => {
             .populate('artist', 'name')
             .populate('album', 'title');
 
-        // Tìm kiếm theo tên nghệ sĩ
         const artists = await Artist.find({
             name: { $regex: q, $options: 'i' },
         });
@@ -182,7 +164,6 @@ const searchSongs = async (req, res) => {
             .populate('artist', 'name')
             .populate('album', 'title');
 
-        // Tìm kiếm theo album
         const albums = await Album.find({
             title: { $regex: q, $options: 'i' },
         });
@@ -192,7 +173,6 @@ const searchSongs = async (req, res) => {
             .populate('artist', 'name')
             .populate('album', 'title');
 
-        // Gộp kết quả và loại bỏ trùng lặp
         const allSongs = [...songs, ...artistSongs, ...albumSongs];
         const uniqueSongs = Array.from(new Set(allSongs.map(song => song._id.toString())))
             .map(id => allSongs.find(song => song._id.toString() === id));

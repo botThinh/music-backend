@@ -2,6 +2,13 @@ const Playlist = require('../models/Playlist');
 
 const getPlaylists = async (req, res) => {
     try {
+        // Nếu là Admin, lấy tất cả playlist
+        if (req.user.role === 'admin') {
+            const playlists = await Playlist.find().populate('songs').populate('user', 'username');
+            return res.json(playlists);
+        }
+
+        // Nếu là User, chỉ lấy playlist của mình
         const playlists = await Playlist.find({ user: req.user.id }).populate('songs');
         res.json(playlists);
     } catch (error) {
@@ -12,9 +19,13 @@ const getPlaylists = async (req, res) => {
 const getPlaylist = async (req, res) => {
     try {
         const playlist = await Playlist.findById(req.params.id).populate('songs');
-        if (!playlist || playlist.user.toString() !== req.user.id) {
-            return res.status(404).json({ message: 'Playlist not found' });
+        if (!playlist) return res.status(404).json({ message: 'Playlist not found' });
+
+        // Kiểm tra quyền sở hữu (middleware ownerOrAdmin đã cho phép Admin tiếp tục)
+        if (req.user.role !== 'admin' && playlist.user.toString() !== req.user.id) {
+            return res.status(403).json({ message: 'Not authorized to view this playlist' });
         }
+
         res.json(playlist);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -36,9 +47,13 @@ const addSongToPlaylist = async (req, res) => {
     const { songId } = req.body;
     try {
         const playlist = await Playlist.findById(req.params.id);
-        if (!playlist || playlist.user.toString() !== req.user.id) {
-            return res.status(404).json({ message: 'Playlist not found' });
+        if (!playlist) return res.status(404).json({ message: 'Playlist not found' });
+
+        // Kiểm tra quyền sở hữu (middleware ownerOrAdmin đã cho phép Admin tiếp tục)
+        if (req.user.role !== 'admin' && playlist.user.toString() !== req.user.id) {
+            return res.status(403).json({ message: 'Not authorized to modify this playlist' });
         }
+
         if (playlist.songs.includes(songId)) {
             return res.status(400).json({ message: 'Song already in playlist' });
         }

@@ -1,7 +1,7 @@
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { uploadToCloudinary } = require('../utils/storage'); // Sử dụng module storage
+const { uploadToCloudinary } = require('../utils/storage');
 
 const register = async (req, res) => {
     const { username, email, password } = req.body;
@@ -14,7 +14,7 @@ const register = async (req, res) => {
         user.password = await bcrypt.hash(password, salt);
         await user.save();
 
-        const payload = { user: { id: user.id } };
+        const payload = { user: { id: user.id, role: user.role } }; // Thêm role vào token
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
         res.json({ token });
     } catch (error) {
@@ -31,7 +31,7 @@ const login = async (req, res) => {
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
 
-        const payload = { user: { id: user.id } };
+        const payload = { user: { id: user.id, role: user.role } }; // Thêm role vào token
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
         res.json({ token });
     } catch (error) {
@@ -54,10 +54,7 @@ const updateAvatar = async (req, res) => {
             return res.status(400).json({ message: 'No file uploaded' });
         }
 
-        // Upload ảnh đại diện lên Cloudinary
         const avatarUrl = await uploadToCloudinary(req.file.path, 'image');
-
-        // Cập nhật avatar của user
         const user = await User.findById(req.user.id);
         user.avatar = avatarUrl;
         await user.save();
