@@ -14,24 +14,25 @@ const getPublicIdFromUrl = (url) => {
 // Get all songs with pagination
 const getSongs = async (req, res) => {
     try {
-        // Extract pagination parameters from query
-        const page = parseInt(req.query.page) || 1; // Default to page 1
-        const limit = parseInt(req.query.limit) || 10; // Default to 10 songs per page
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        if (page < 1 || limit < 1) {
+            return res.status(400).json({ message: 'Page and limit must be positive numbers' });
+        }
+
         const skip = (page - 1) * limit;
 
-        // Fetch songs with pagination
-        const songs = await Song.find()
-            .populate('artist', 'name')
+        // Fetch songs with pagination, populate artists (not artist), album, and uploadedBy
+        const songs = await Song.find({ status: 'public' }) // Chỉ lấy bài hát công khai
+            .populate('artists', 'name') // Populate mảng artists
             .populate('album', 'title')
             .populate('uploadedBy', 'username')
             .skip(skip)
             .limit(limit)
             .lean();
 
-        // Get total count for pagination metadata
-        const totalSongs = await Song.countDocuments();
+        const totalSongs = await Song.countDocuments({ status: 'public' });
 
-        // Prepare response with pagination metadata
         res.json({
             songs,
             pagination: {
@@ -51,11 +52,17 @@ const getSongs = async (req, res) => {
 const getSong = async (req, res) => {
     try {
         const song = await Song.findById(req.params.id)
-            .populate('artist', 'name')
+            .populate('artists', 'name') // Populate mảng artists
             .populate('album', 'title')
             .populate('uploadedBy', 'username')
             .lean();
         if (!song) return res.status(404).json({ message: 'Song not found' });
+
+        // Kiểm tra trạng thái bài hát
+        if (song.status !== 'public' && (!req.user || (req.user.role !== 'admin' && song.uploadedBy.toString() !== req.user.id))) {
+            return res.status(403).json({ message: 'Not authorized to view this song' });
+        }
+
         res.json(song);
     } catch (error) {
         console.error('Error in getSong:', error);
@@ -65,56 +72,83 @@ const getSong = async (req, res) => {
 
 // Add a new song
 const addSong = async (req, res) => {
-    const { title, artist, album, duration } = req.body || {};
+    const { title, artists, album, duration, genres, releaseYear, tags, language, lyrics } = req.body || {};
 
     try {
-        // Check if files are present
+        // Validate required fields
+        if (!title || !artists || !duration) {
+            return res.status(400).json({ message: 'Title, artists, and duration are required' });
+        }
+
+        // Validate files
         if (!req.files || !req.files.url || !req.files.thumbnail) {
             return res.status(400).json({ message: 'Both MP3 file and thumbnail are required' });
         }
 
-        // Log the files to debug
-        console.log('Uploaded files:', req.files);
-
-        // Validate MP3 file buffer
         const mp3File = req.files.url[0];
+        const thumbnailFile = req.files.thumbnail[0];
+
         if (!mp3File.buffer || mp3File.buffer.length === 0) {
             return res.status(400).json({ message: 'MP3 file is empty' });
         }
 
-        // Validate thumbnail file buffer
-        const thumbnailFile = req.files.thumbnail[0];
         if (!thumbnailFile.buffer || thumbnailFile.buffer.length === 0) {
             return res.status(400).json({ message: 'Thumbnail file is empty' });
         }
 
-        // Validate artist
-        const artistExists = await Artist.findById(artist);
-        if (!artistExists) return res.status(404).json({ message: 'Artist not found' });
+        // Validate artists (now an array)
+        let artistsArray;
+        try {
+            artistsArray = typeof artists === 'string' ? JSON.parse(artists) : artists;
+            if (!Array.isArray(artistsArray) || artistsArray.length === 0) {
+                return res.status(400).json({ message: 'Artists must be a non-empty array' });
+            }
+        } catch (error) {
+            return res.status(400).json({ message: 'Invalid artists format' });
+        }
+
+        const artistDocs = await Artist.find({ _id: { $in: artistsArray } });
+        if (artistDocs.length !== artistsArray.length) {
+            return res.status(404).json({ message: 'One or more artists not found' });
+        }
 
         // Validate album if provided
-        let albumExists = null;
+        let albumDoc = null;
         if (album) {
-            albumExists = await Album.findById(album);
-            if (!albumExists) return res.status(404).json({ message: 'Album not found' });
-            if (albumExists.artist.toString() !== artist) {
-                return res.status(400).json({ message: 'Album does not belong to this artist' });
+            albumDoc = await Album.findById(album);
+            if (!albumDoc) return res.status(404).json({ message: 'Album not found' });
+            // Check if album belongs to one of the artists
+            if (!albumDoc.artist || !artistsArray.includes(albumDoc.artist.toString())) {
+                return res.status(400).json({ message: 'Album does not belong to any of the specified artists' });
             }
         }
 
-        // Upload MP3 and thumbnail to Cloudinary using the buffer
-        const mp3Url = await uploadToCloudinary(mp3File.buffer, 'mp3');
-        const thumbnailUrl = await uploadToCloudinary(thumbnailFile.buffer, 'image');
+        // Upload files to Cloudinary
+        const [mp3Url, thumbnailUrl] = await Promise.all([
+            uploadToCloudinary(mp3File.buffer, 'mp3'),
+            uploadToCloudinary(thumbnailFile.buffer, 'image', {
+                width: 300,
+                height: 300,
+                crop: 'fit',
+                quality: 'auto',
+            }),
+        ]);
 
-        // Create new song
+        // Create new song with new fields
         const song = new Song({
             title,
-            artist,
+            artists: artistsArray, // Lưu mảng artists
             album: album || null,
             url: mp3Url,
             thumbnail: thumbnailUrl,
-            duration,
+            duration: parseInt(duration, 10),
             uploadedBy: req.user.id,
+            genres: genres ? (typeof genres === 'string' ? JSON.parse(genres) : genres) : [],
+            releaseYear: releaseYear ? parseInt(releaseYear, 10) : undefined,
+            tags: tags ? (typeof tags === 'string' ? JSON.parse(tags) : tags) : [],
+            language: language || 'English',
+            lyrics: lyrics || '',
+            status: req.user.role === 'admin' ? 'public' : 'pending', // Admin có thể công khai ngay, user thường thì chờ duyệt
         });
 
         await song.save();
@@ -127,16 +161,18 @@ const addSong = async (req, res) => {
 
 // Update an existing song
 const updateSong = async (req, res) => {
-    const { title, artist, album, duration } = req.body || {};
+    const { title, artists, album, duration, genres, releaseYear, tags, language, lyrics, status } = req.body || {};
 
     try {
         const song = await Song.findById(req.params.id);
         if (!song) return res.status(404).json({ message: 'Song not found' });
 
+        // Kiểm tra quyền chỉnh sửa
         if (req.user.role !== 'admin' && song.uploadedBy.toString() !== req.user.id) {
             return res.status(403).json({ message: 'Not authorized to update this song' });
         }
 
+        // Cập nhật các trường cơ bản
         if (title) song.title = title;
 
         if (duration) {
@@ -147,23 +183,59 @@ const updateSong = async (req, res) => {
             song.duration = durationNum;
         }
 
-        if (artist) {
-            const artistExists = await Artist.findById(artist);
-            if (!artistExists) return res.status(404).json({ message: 'Artist not found' });
-            song.artist = artist;
+        // Cập nhật artists (mảng)
+        if (artists) {
+            let artistsArray;
+            try {
+                artistsArray = typeof artists === 'string' ? JSON.parse(artists) : artists;
+                if (!Array.isArray(artistsArray) || artistsArray.length === 0) {
+                    return res.status(400).json({ message: 'Artists must be a non-empty array' });
+                }
+            } catch (error) {
+                return res.status(400).json({ message: 'Invalid artists format' });
+            }
+
+            const artistDocs = await Artist.find({ _id: { $in: artistsArray } });
+            if (artistDocs.length !== artistsArray.length) {
+                return res.status(404).json({ message: 'One or more artists not found' });
+            }
+            song.artists = artistsArray;
         }
 
+        // Cập nhật album
         if (album) {
-            const albumExists = await Album.findById(album);
-            if (!albumExists) return res.status(404).json({ message: 'Album not found' });
-            if (albumExists.artist.toString() !== (artist || song.artist).toString()) {
-                return res.status(400).json({ message: 'Album does not belong to this artist' });
+            const albumDoc = await Album.findById(album);
+            if (!albumDoc) return res.status(404).json({ message: 'Album not found' });
+            const currentArtists = artists ? artistsArray : song.artists;
+            if (albumDoc.artist.toString() !== currentArtists[0]) { // Kiểm tra với artist đầu tiên (có thể mở rộng logic nếu cần)
+                return res.status(400).json({ message: 'Album does not belong to any of the specified artists' });
             }
             song.album = album;
         } else if (album === null) {
             song.album = null;
         }
 
+        // Cập nhật các trường mới
+        if (genres) {
+            song.genres = typeof genres === 'string' ? JSON.parse(genres) : genres;
+        }
+        if (releaseYear) {
+            song.releaseYear = parseInt(releaseYear, 10);
+        }
+        if (tags) {
+            song.tags = typeof tags === 'string' ? JSON.parse(tags) : tags;
+        }
+        if (language) {
+            song.language = language;
+        }
+        if (lyrics) {
+            song.lyrics = lyrics;
+        }
+        if (status && req.user.role === 'admin') { // Chỉ admin mới được thay đổi status
+            song.status = status;
+        }
+
+        // Cập nhật file MP3 nếu có
         if (req.files && req.files.url) {
             const mp3File = req.files.url[0];
             if (!mp3File.buffer || mp3File.buffer.length === 0) {
@@ -181,6 +253,7 @@ const updateSong = async (req, res) => {
             song.url = mp3Url;
         }
 
+        // Cập nhật thumbnail nếu có
         if (req.files && req.files.thumbnail) {
             const thumbnailFile = req.files.thumbnail[0];
             if (!thumbnailFile.buffer || thumbnailFile.buffer.length === 0) {
@@ -200,8 +273,9 @@ const updateSong = async (req, res) => {
 
         await song.save();
 
+        // Populate lại để trả về dữ liệu đầy đủ
         const populatedSong = await Song.findById(song._id)
-            .populate('artist', 'name')
+            .populate('artists', 'name')
             .populate('album', 'title')
             .populate('uploadedBy', 'username')
             .lean();
@@ -239,20 +313,51 @@ const deleteSong = async (req, res) => {
 
 // Search songs with pagination
 const searchSongs = async (req, res) => {
-    const { q, page = 1, limit = 10 } = req.query;
+    const { q, page = 1, limit = 10, genre, language, tag } = req.query;
 
-    if (!q) return res.status(400).json({ message: 'Search query is required' });
+    if (!q && !genre && !language && !tag) {
+        return res.status(400).json({ message: 'At least one search criterion (query, genre, language, or tag) is required' });
+    }
 
     try {
-        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        if (pageNum < 1 || limitNum < 1) {
+            return res.status(400).json({ message: 'Page and limit must be positive numbers' });
+        }
 
-        // Use MongoDB aggregation to search across song title, artist name, and album title
+        const skip = (pageNum - 1) * limitNum;
+
+        // Xây dựng điều kiện tìm kiếm
+        const matchConditions = [];
+        if (q) {
+            matchConditions.push({
+                $or: [
+                    { title: { $regex: q, $options: 'i' } },
+                    { 'artist.name': { $regex: q, $options: 'i' } },
+                    { 'album.title': { $regex: q, $options: 'i' } },
+                    { tags: { $regex: q, $options: 'i' } },
+                ],
+            });
+        }
+        if (genre) {
+            matchConditions.push({ genres: genre });
+        }
+        if (language) {
+            matchConditions.push({ language: language });
+        }
+        if (tag) {
+            matchConditions.push({ tags: tag });
+        }
+
+        // Chỉ lấy bài hát công khai
+        matchConditions.push({ status: 'public' });
+
         const pipeline = [
-            // Lookup to join with Artist and Album collections
             {
                 $lookup: {
                     from: 'artists',
-                    localField: 'artist',
+                    localField: 'artists', // Cập nhật để dùng artists
                     foreignField: '_id',
                     as: 'artist',
                 },
@@ -273,21 +378,12 @@ const searchSongs = async (req, res) => {
                     as: 'uploadedBy',
                 },
             },
-            // Unwind the arrays created by lookup
             { $unwind: { path: '$artist', preserveNullAndEmptyArrays: true } },
             { $unwind: { path: '$album', preserveNullAndEmptyArrays: true } },
             { $unwind: { path: '$uploadedBy', preserveNullAndEmptyArrays: true } },
-            // Match songs where title, artist name, or album title matches the query
             {
-                $match: {
-                    $or: [
-                        { title: { $regex: q, $options: 'i' } },
-                        { 'artist.name': { $regex: q, $options: 'i' } },
-                        { 'album.title': { $regex: q, $options: 'i' } },
-                    ],
-                },
+                $match: matchConditions.length > 0 ? { $and: matchConditions } : {},
             },
-            // Project only the fields we need
             {
                 $project: {
                     title: 1,
@@ -299,21 +395,26 @@ const searchSongs = async (req, res) => {
                     'uploadedBy.username': 1,
                     createdAt: 1,
                     updatedAt: 1,
+                    genres: 1,
+                    playCount: 1,
+                    likes: 1,
+                    releaseYear: 1,
+                    tags: 1,
+                    language: 1,
+                    lyrics: 1,
                 },
             },
-            // Apply pagination
             { $skip: skip },
-            { $limit: parseInt(limit) },
+            { $limit: limitNum },
         ];
 
         const songs = await Song.aggregate(pipeline).exec();
 
-        // Get total count for pagination metadata
         const countPipeline = [
             {
                 $lookup: {
                     from: 'artists',
-                    localField: 'artist',
+                    localField: 'artists',
                     foreignField: '_id',
                     as: 'artist',
                 },
@@ -329,13 +430,7 @@ const searchSongs = async (req, res) => {
             { $unwind: { path: '$artist', preserveNullAndEmptyArrays: true } },
             { $unwind: { path: '$album', preserveNullAndEmptyArrays: true } },
             {
-                $match: {
-                    $or: [
-                        { title: { $regex: q, $options: 'i' } },
-                        { 'artist.name': { $regex: q, $options: 'i' } },
-                        { 'album.title': { $regex: q, $options: 'i' } },
-                    ],
-                },
+                $match: matchConditions.length > 0 ? { $and: matchConditions } : {},
             },
             { $count: 'total' },
         ];
@@ -343,14 +438,13 @@ const searchSongs = async (req, res) => {
         const countResult = await Song.aggregate(countPipeline).exec();
         const totalSongs = countResult[0]?.total || 0;
 
-        // Prepare response with pagination metadata
         res.json({
             songs,
             pagination: {
-                currentPage: parseInt(page),
-                totalPages: Math.ceil(totalSongs / limit),
+                currentPage: pageNum,
+                totalPages: Math.ceil(totalSongs / limitNum),
                 totalSongs,
-                limit: parseInt(limit),
+                limit: limitNum,
             },
         });
     } catch (error) {

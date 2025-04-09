@@ -6,6 +6,7 @@ const userRoutes = require('./routes/userRoutes');
 const playlistRoutes = require('./routes/playlistRoutes');
 const artistRoutes = require('./routes/artistRoutes');
 const albumRoutes = require('./routes/albumRoutes');
+const searchRoutes = require('./routes/searchRoutes');
 const path = require('path');
 const cookieParser = require('cookie-parser'); // Thêm cookie-parser
 
@@ -25,6 +26,7 @@ app.use('/api/songs', songRoutes);
 app.use('/api/playlists', playlistRoutes);
 app.use('/api/artists', artistRoutes);
 app.use('/api/albums', albumRoutes);
+app.use('/api/search', searchRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
