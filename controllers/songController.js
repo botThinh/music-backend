@@ -2,43 +2,97 @@ const Song = require('../models/Song');
 const Artist = require('../models/Artist');
 const Album = require('../models/Album');
 const { uploadToCloudinary } = require('../utils/storage');
+const cloudinary = require('../config/cloudinary');
 
+// Utility function to extract public_id from Cloudinary URL
+const getPublicIdFromUrl = (url) => {
+    const parts = url.split('/');
+    const fileName = parts[parts.length - 1];
+    return fileName.split('.')[0];
+};
+
+// Get all songs with pagination
 const getSongs = async (req, res) => {
     try {
+        // Extract pagination parameters from query
+        const page = parseInt(req.query.page) || 1; // Default to page 1
+        const limit = parseInt(req.query.limit) || 10; // Default to 10 songs per page
+        const skip = (page - 1) * limit;
+
+        // Fetch songs with pagination
         const songs = await Song.find()
             .populate('artist', 'name')
             .populate('album', 'title')
-            .populate('uploadedBy', 'username');
-        res.json(songs);
+            .populate('uploadedBy', 'username')
+            .skip(skip)
+            .limit(limit)
+            .lean();
+
+        // Get total count for pagination metadata
+        const totalSongs = await Song.countDocuments();
+
+        // Prepare response with pagination metadata
+        res.json({
+            songs,
+            pagination: {
+                currentPage: page,
+                totalPages: Math.ceil(totalSongs / limit),
+                totalSongs,
+                limit,
+            },
+        });
     } catch (error) {
+        console.error('Error in getSongs:', error);
         res.status(500).json({ message: error.message });
     }
 };
 
+// Get a single song by ID
 const getSong = async (req, res) => {
     try {
         const song = await Song.findById(req.params.id)
             .populate('artist', 'name')
             .populate('album', 'title')
-            .populate('uploadedBy', 'username');
+            .populate('uploadedBy', 'username')
+            .lean();
         if (!song) return res.status(404).json({ message: 'Song not found' });
         res.json(song);
     } catch (error) {
+        console.error('Error in getSong:', error);
         res.status(500).json({ message: error.message });
     }
 };
 
+// Add a new song
 const addSong = async (req, res) => {
-    const { title, artist, album, duration } = req.body;
+    const { title, artist, album, duration } = req.body || {};
 
     try {
-        if (!req.files || !req.files.file || !req.files.thumbnail) {
+        // Check if files are present
+        if (!req.files || !req.files.url || !req.files.thumbnail) {
             return res.status(400).json({ message: 'Both MP3 file and thumbnail are required' });
         }
 
+        // Log the files to debug
+        console.log('Uploaded files:', req.files);
+
+        // Validate MP3 file buffer
+        const mp3File = req.files.url[0];
+        if (!mp3File.buffer || mp3File.buffer.length === 0) {
+            return res.status(400).json({ message: 'MP3 file is empty' });
+        }
+
+        // Validate thumbnail file buffer
+        const thumbnailFile = req.files.thumbnail[0];
+        if (!thumbnailFile.buffer || thumbnailFile.buffer.length === 0) {
+            return res.status(400).json({ message: 'Thumbnail file is empty' });
+        }
+
+        // Validate artist
         const artistExists = await Artist.findById(artist);
         if (!artistExists) return res.status(404).json({ message: 'Artist not found' });
 
+        // Validate album if provided
         let albumExists = null;
         if (album) {
             albumExists = await Album.findById(album);
@@ -48,9 +102,11 @@ const addSong = async (req, res) => {
             }
         }
 
-        const mp3Url = await uploadToCloudinary(req.files.file[0].path, 'mp3');
-        const thumbnailUrl = await uploadToCloudinary(req.files.thumbnail[0].path, 'image');
+        // Upload MP3 and thumbnail to Cloudinary using the buffer
+        const mp3Url = await uploadToCloudinary(mp3File.buffer, 'mp3');
+        const thumbnailUrl = await uploadToCloudinary(thumbnailFile.buffer, 'image');
 
+        // Create new song
         const song = new Song({
             title,
             artist,
@@ -64,24 +120,32 @@ const addSong = async (req, res) => {
         await song.save();
         res.status(201).json(song);
     } catch (error) {
+        console.error('Error in addSong:', error);
         res.status(400).json({ message: error.message });
     }
 };
 
+// Update an existing song
 const updateSong = async (req, res) => {
-    const { title, artist, album, duration } = req.body;
+    const { title, artist, album, duration } = req.body || {};
 
     try {
         const song = await Song.findById(req.params.id);
         if (!song) return res.status(404).json({ message: 'Song not found' });
 
-        // Kiểm tra quyền sở hữu (middleware ownerOrAdmin đã cho phép Admin tiếp tục)
         if (req.user.role !== 'admin' && song.uploadedBy.toString() !== req.user.id) {
             return res.status(403).json({ message: 'Not authorized to update this song' });
         }
 
         if (title) song.title = title;
-        if (duration) song.duration = duration;
+
+        if (duration) {
+            const durationNum = parseInt(duration, 10);
+            if (isNaN(durationNum) || durationNum <= 0) {
+                return res.status(400).json({ message: 'Duration must be a positive number' });
+            }
+            song.duration = durationNum;
+        }
 
         if (artist) {
             const artistExists = await Artist.findById(artist);
@@ -100,85 +164,197 @@ const updateSong = async (req, res) => {
             song.album = null;
         }
 
-        if (req.files && req.files.file) {
-            const oldMp3PublicId = song.url.split('/').pop().split('.')[0];
-            await cloudinary.uploader.destroy(`music-app/songs/${oldMp3PublicId}`, { resource_type: 'video' });
-            const mp3Url = await uploadToCloudinary(req.files.file[0].path, 'mp3');
+        if (req.files && req.files.url) {
+            const mp3File = req.files.url[0];
+            if (!mp3File.buffer || mp3File.buffer.length === 0) {
+                return res.status(400).json({ message: 'MP3 file is empty' });
+            }
+
+            const oldMp3PublicId = getPublicIdFromUrl(song.url);
+            try {
+                await cloudinary.uploader.destroy(`music-app/songs/${oldMp3PublicId}`, { resource_type: 'video' });
+            } catch (error) {
+                console.error('Failed to delete old MP3 from Cloudinary:', error);
+            }
+
+            const mp3Url = await uploadToCloudinary(mp3File.buffer, 'mp3');
             song.url = mp3Url;
         }
 
         if (req.files && req.files.thumbnail) {
-            const oldThumbnailPublicId = song.thumbnail.split('/').pop().split('.')[0];
-            await cloudinary.uploader.destroy(`music-app/thumbnails/${oldThumbnailPublicId}`);
-            const thumbnailUrl = await uploadToCloudinary(req.files.thumbnail[0].path, 'image');
+            const thumbnailFile = req.files.thumbnail[0];
+            if (!thumbnailFile.buffer || thumbnailFile.buffer.length === 0) {
+                return res.status(400).json({ message: 'Thumbnail file is empty' });
+            }
+
+            const oldThumbnailPublicId = getPublicIdFromUrl(song.thumbnail);
+            try {
+                await cloudinary.uploader.destroy(`music-app/thumbnails/${oldThumbnailPublicId}`);
+            } catch (error) {
+                console.error('Failed to delete old thumbnail from Cloudinary:', error);
+            }
+
+            const thumbnailUrl = await uploadToCloudinary(thumbnailFile.buffer, 'image');
             song.thumbnail = thumbnailUrl;
         }
 
         await song.save();
-        res.json(song);
+
+        const populatedSong = await Song.findById(song._id)
+            .populate('artist', 'name')
+            .populate('album', 'title')
+            .populate('uploadedBy', 'username')
+            .lean();
+
+        res.json(populatedSong);
     } catch (error) {
+        console.error('Error in updateSong:', error);
         res.status(400).json({ message: error.message });
     }
 };
 
+// Delete a song
 const deleteSong = async (req, res) => {
     try {
         const song = await Song.findById(req.params.id);
         if (!song) return res.status(404).json({ message: 'Song not found' });
 
-        // Kiểm tra quyền sở hữu (middleware ownerOrAdmin đã cho phép Admin tiếp tục)
         if (req.user.role !== 'admin' && song.uploadedBy.toString() !== req.user.id) {
             return res.status(403).json({ message: 'Not authorized to delete this song' });
         }
 
-        const mp3PublicId = song.url.split('/').pop().split('.')[0];
+        const mp3PublicId = getPublicIdFromUrl(song.url);
         await cloudinary.uploader.destroy(`music-app/songs/${mp3PublicId}`, { resource_type: 'video' });
 
-        const thumbnailPublicId = song.thumbnail.split('/').pop().split('.')[0];
+        const thumbnailPublicId = getPublicIdFromUrl(song.thumbnail);
         await cloudinary.uploader.destroy(`music-app/thumbnails/${thumbnailPublicId}`);
 
-        await song.remove();
+        await song.deleteOne();
         res.json({ message: 'Song deleted' });
     } catch (error) {
+        console.error('Error in deleteSong:', error);
         res.status(500).json({ message: error.message });
     }
 };
 
+// Search songs with pagination
 const searchSongs = async (req, res) => {
-    const { q } = req.query;
+    const { q, page = 1, limit = 10 } = req.query;
+
+    if (!q) return res.status(400).json({ message: 'Search query is required' });
+
     try {
-        const songs = await Song.find({
-            $or: [
-                { title: { $regex: q, $options: 'i' } },
-            ],
-        })
-            .populate('artist', 'name')
-            .populate('album', 'title');
+        const skip = (parseInt(page) - 1) * parseInt(limit);
 
-        const artists = await Artist.find({
-            name: { $regex: q, $options: 'i' },
+        // Use MongoDB aggregation to search across song title, artist name, and album title
+        const pipeline = [
+            // Lookup to join with Artist and Album collections
+            {
+                $lookup: {
+                    from: 'artists',
+                    localField: 'artist',
+                    foreignField: '_id',
+                    as: 'artist',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'albums',
+                    localField: 'album',
+                    foreignField: '_id',
+                    as: 'album',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: 'uploadedBy',
+                    foreignField: '_id',
+                    as: 'uploadedBy',
+                },
+            },
+            // Unwind the arrays created by lookup
+            { $unwind: { path: '$artist', preserveNullAndEmptyArrays: true } },
+            { $unwind: { path: '$album', preserveNullAndEmptyArrays: true } },
+            { $unwind: { path: '$uploadedBy', preserveNullAndEmptyArrays: true } },
+            // Match songs where title, artist name, or album title matches the query
+            {
+                $match: {
+                    $or: [
+                        { title: { $regex: q, $options: 'i' } },
+                        { 'artist.name': { $regex: q, $options: 'i' } },
+                        { 'album.title': { $regex: q, $options: 'i' } },
+                    ],
+                },
+            },
+            // Project only the fields we need
+            {
+                $project: {
+                    title: 1,
+                    url: 1,
+                    thumbnail: 1,
+                    duration: 1,
+                    'artist.name': 1,
+                    'album.title': 1,
+                    'uploadedBy.username': 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                },
+            },
+            // Apply pagination
+            { $skip: skip },
+            { $limit: parseInt(limit) },
+        ];
+
+        const songs = await Song.aggregate(pipeline).exec();
+
+        // Get total count for pagination metadata
+        const countPipeline = [
+            {
+                $lookup: {
+                    from: 'artists',
+                    localField: 'artist',
+                    foreignField: '_id',
+                    as: 'artist',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'albums',
+                    localField: 'album',
+                    foreignField: '_id',
+                    as: 'album',
+                },
+            },
+            { $unwind: { path: '$artist', preserveNullAndEmptyArrays: true } },
+            { $unwind: { path: '$album', preserveNullAndEmptyArrays: true } },
+            {
+                $match: {
+                    $or: [
+                        { title: { $regex: q, $options: 'i' } },
+                        { 'artist.name': { $regex: q, $options: 'i' } },
+                        { 'album.title': { $regex: q, $options: 'i' } },
+                    ],
+                },
+            },
+            { $count: 'total' },
+        ];
+
+        const countResult = await Song.aggregate(countPipeline).exec();
+        const totalSongs = countResult[0]?.total || 0;
+
+        // Prepare response with pagination metadata
+        res.json({
+            songs,
+            pagination: {
+                currentPage: parseInt(page),
+                totalPages: Math.ceil(totalSongs / limit),
+                totalSongs,
+                limit: parseInt(limit),
+            },
         });
-        const artistSongs = await Song.find({
-            artist: { $in: artists.map(artist => artist._id) },
-        })
-            .populate('artist', 'name')
-            .populate('album', 'title');
-
-        const albums = await Album.find({
-            title: { $regex: q, $options: 'i' },
-        });
-        const albumSongs = await Song.find({
-            album: { $in: albums.map(album => album._id) },
-        })
-            .populate('artist', 'name')
-            .populate('album', 'title');
-
-        const allSongs = [...songs, ...artistSongs, ...albumSongs];
-        const uniqueSongs = Array.from(new Set(allSongs.map(song => song._id.toString())))
-            .map(id => allSongs.find(song => song._id.toString() === id));
-
-        res.json(uniqueSongs);
     } catch (error) {
+        console.error('Error in searchSongs:', error);
         res.status(500).json({ message: error.message });
     }
 };
