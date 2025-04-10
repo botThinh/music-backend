@@ -9,18 +9,29 @@ const getArtists = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
+        const q = req.query.q; // Query parameter for searching by name
+
         if (page < 1 || limit < 1) {
             return res.status(400).json({ message: 'Page and limit must be positive numbers' });
         }
 
         const skip = (page - 1) * limit;
 
-        const artists = await Artist.find()
+        // Build search conditions
+        const searchConditions = {};
+
+        // Add name search if query parameter exists
+        if (q) {
+            searchConditions.name = { $regex: q, $options: 'i' };
+        }
+
+        const artists = await Artist.find(searchConditions)
             .skip(skip)
             .limit(limit)
             .lean();
 
-        const totalArtists = await Artist.countDocuments();
+        // Count total artists matching the search conditions
+        const totalArtists = await Artist.countDocuments(searchConditions);
 
         res.json({
             artists,

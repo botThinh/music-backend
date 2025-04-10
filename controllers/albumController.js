@@ -9,19 +9,30 @@ const getAlbums = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
+        const q = req.query.q; // Query parameter for searching by title
+
         if (page < 1 || limit < 1) {
             return res.status(400).json({ message: 'Page and limit must be positive numbers' });
         }
 
         const skip = (page - 1) * limit;
 
-        const albums = await Album.find()
+        // Build search conditions
+        const searchConditions = {};
+
+        // Add title search if query parameter exists
+        if (q) {
+            searchConditions.title = { $regex: q, $options: 'i' };
+        }
+
+        const albums = await Album.find(searchConditions)
             .populate('artist', 'name')
             .skip(skip)
             .limit(limit)
             .lean();
 
-        const totalAlbums = await Album.countDocuments();
+        // Count total albums matching the search conditions
+        const totalAlbums = await Album.countDocuments(searchConditions);
 
         res.json({
             albums,

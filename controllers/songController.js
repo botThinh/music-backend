@@ -16,22 +16,33 @@ const getSongs = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
+        const q = req.query.q; // Query parameter for searching by title
+
         if (page < 1 || limit < 1) {
             return res.status(400).json({ message: 'Page and limit must be positive numbers' });
         }
 
         const skip = (page - 1) * limit;
 
-        // Fetch songs with pagination, populate artists (not artist), album, and uploadedBy
-        const songs = await Song.find({ status: 'public' }) // Chỉ lấy bài hát công khai
-            .populate('artists', 'name') // Populate mảng artists
+        // Build search conditions
+        const searchConditions = { status: 'public' };
+
+        // Add title search if query parameter exists
+        if (q) {
+            searchConditions.title = { $regex: q, $options: 'i' };
+        }
+
+        // Fetch songs with pagination, populate artists, album, and uploadedBy
+        const songs = await Song.find(searchConditions)
+            .populate('artists', 'name')
             .populate('album', 'title')
             .populate('uploadedBy', 'username')
             .skip(skip)
             .limit(limit)
             .lean();
 
-        const totalSongs = await Song.countDocuments({ status: 'public' });
+        // Count total songs matching the search conditions
+        const totalSongs = await Song.countDocuments(searchConditions);
 
         res.json({
             songs,
