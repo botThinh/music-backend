@@ -8,16 +8,23 @@ const artistRoutes = require('./routes/artistRoutes');
 const albumRoutes = require('./routes/albumRoutes');
 const searchRoutes = require('./routes/searchRoutes');
 const path = require('path');
-const cookieParser = require('cookie-parser'); // Thêm cookie-parser
+const cookieParser = require('cookie-parser');
+const cors = require('cors'); // Thêm cors
 
 dotenv.config();
 connectDB();
 
 const app = express();
 
+// Cấu hình CORS
+app.use(cors({
+    origin: 'http://localhost:3000', // Cho phép origin của frontend
+    credentials: true, // Nếu bạn sử dụng cookie hoặc authentication
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser()); // Thêm middleware cookie-parser
+app.use(cookieParser());
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
