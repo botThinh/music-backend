@@ -9,7 +9,7 @@ const albumRoutes = require('./routes/albumRoutes');
 const searchRoutes = require('./routes/searchRoutes');
 const path = require('path');
 const cookieParser = require('cookie-parser');
-const cors = require('cors'); // Thêm cors
+const cors = require('cors');
 
 dotenv.config();
 connectDB();
@@ -18,8 +18,8 @@ const app = express();
 
 // Cấu hình CORS
 app.use(cors({
-    origin: 'http://localhost:3000', // Cho phép origin của frontend
-    credentials: true, // Nếu bạn sử dụng cookie hoặc authentication
+    origin: 'http://localhost:3000',
+    credentials: true,
 }));
 
 app.use(express.json());
