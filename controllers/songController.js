@@ -107,15 +107,27 @@ const addSong = async (req, res) => {
             return res.status(400).json({ message: 'Thumbnail file is empty' });
         }
 
-        // Validate artists (now an array)
+        // Validate artists (accept both single id and array)
         let artistsArray;
-        try {
-            artistsArray = typeof artists === 'string' ? JSON.parse(artists) : artists;
-            if (!Array.isArray(artistsArray) || artistsArray.length === 0) {
-                return res.status(400).json({ message: 'Artists must be a non-empty array' });
+        if (Array.isArray(artists)) {
+            artistsArray = artists;
+        } else if (typeof artists === 'string') {
+            try {
+                // Nếu là chuỗi JSON mảng
+                artistsArray = JSON.parse(artists);
+                if (!Array.isArray(artistsArray)) {
+                    // Nếu parse ra không phải mảng (tức là chuỗi id đơn lẻ)
+                    artistsArray = [artists];
+                }
+            } catch {
+                // Nếu parse lỗi (tức là chuỗi id đơn lẻ)
+                artistsArray = [artists];
             }
-        } catch (error) {
+        } else {
             return res.status(400).json({ message: 'Invalid artists format' });
+        }
+        if (!Array.isArray(artistsArray) || artistsArray.length === 0) {
+            return res.status(400).json({ message: 'Artists must be a non-empty array' });
         }
 
         const artistDocs = await Artist.find({ _id: { $in: artistsArray } });
