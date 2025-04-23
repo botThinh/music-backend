@@ -34,6 +34,53 @@ exports.saveSongPlay = async (req, res) => {
     }
 };
 
+// Lấy danh sách bài hát đã nghe gần đây
+exports.getRecentlyPlayed = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const userHistory = await UserHistory.findOne({ user: userId })
+          .populate({
+            path: 'history.song',
+            model: 'Song',
+            populate: {
+              path: 'artists',
+              model: 'Artist',
+              select: 'name _id'
+            }
+          });
+        if (!userHistory || !userHistory.history.length) {
+            return res.status(200).json([]);
+        }
+        // Sắp xếp theo thời gian nghe gần nhất
+        const sortedHistory = userHistory.history
+            .sort((a, b) => b.lastPlayedAt - a.lastPlayedAt)
+            .slice(0, 20); // lấy 20 bài gần nhất
+        const songs = sortedHistory.map(h => {
+            const song = h.song;
+            return {
+                id: song._id,
+                title: song.title,
+                artists: Array.isArray(song.artists)
+                  ? song.artists.map(a => ({ id: a._id, name: a.name }))
+                  : [],
+                album: song.album,
+                coverUrl: song.coverUrl || song.thumbnail,
+                genre: song.genre,
+                releaseDate: song.releaseDate,
+                duration: song.duration,
+                plays: song.plays,
+                lyrics: song.lyrics,
+                url: song.url || song.audioUrl,
+                lastPlayedAt: h.lastPlayedAt
+            };
+        });
+        res.status(200).json(songs);
+    } catch (error) {
+        console.error('Error in getRecentlyPlayed:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
 // Đề xuất nhạc dựa trên thể loại user nghe nhiều nhất
 exports.recommendSongs = async (req, res) => {
     try {
