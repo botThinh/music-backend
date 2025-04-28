@@ -65,4 +65,56 @@ const addSongToPlaylist = async (req, res) => {
     }
 };
 
-module.exports = { getPlaylists, getPlaylist, createPlaylist, addSongToPlaylist };
+// Xóa playlist
+const deletePlaylist = async (req, res) => {
+    try {
+        const playlist = await Playlist.findById(req.params.id);
+        if (!playlist) return res.status(404).json({ message: 'Playlist not found' });
+        if (req.user.role !== 'admin' && playlist.user.toString() !== req.user.id) {
+            return res.status(403).json({ message: 'Not authorized to delete this playlist' });
+        }
+        await playlist.deleteOne();
+        res.json({ message: 'Playlist deleted' });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// Cập nhật tên/mô tả playlist
+const updatePlaylist = async (req, res) => {
+    const { name, description } = req.body;
+    try {
+        const playlist = await Playlist.findById(req.params.id);
+        if (!playlist) return res.status(404).json({ message: 'Playlist not found' });
+        if (req.user.role !== 'admin' && playlist.user.toString() !== req.user.id) {
+            return res.status(403).json({ message: 'Not authorized to update this playlist' });
+        }
+        if (name) playlist.name = name;
+        if (description !== undefined) playlist.description = description;
+        await playlist.save();
+        res.json(playlist);
+    } catch (error) {
+        res.status(400).json({ message: error.message });
+    }
+};
+
+// Xóa bài hát khỏi playlist
+const removeSongFromPlaylist = async (req, res) => {
+    try {
+        const playlist = await Playlist.findById(req.params.id);
+        if (!playlist) return res.status(404).json({ message: 'Playlist not found' });
+        if (req.user.role !== 'admin' && playlist.user.toString() !== req.user.id) {
+            return res.status(403).json({ message: 'Not authorized to modify this playlist' });
+        }
+        const songId = req.params.songId;
+        const idx = playlist.songs.indexOf(songId);
+        if (idx === -1) return res.status(404).json({ message: 'Song not in playlist' });
+        playlist.songs.splice(idx, 1);
+        await playlist.save();
+        res.json(playlist);
+    } catch (error) {
+        res.status(400).json({ message: error.message });
+    }
+};
+
+module.exports = { getPlaylists, getPlaylist, createPlaylist, addSongToPlaylist, deletePlaylist, updatePlaylist, removeSongFromPlaylist };
