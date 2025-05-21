@@ -1,11 +1,30 @@
 const express = require('express');
 const router = express.Router();
-const { globalSearch, globalSearchAll } = require('../controllers/searchController');
+const {
+    globalSearch,
+    globalSearchAll,
+    searchByTitle,
+    searchByArtist,
+    searchByLyrics,
+    searchByGenre
+} = require('../controllers/searchController');
 
-// Route để tìm kiếm tổng hợp có phân trang
+// Global search with pagination
 router.get('/', globalSearch);
 
-// Route để tìm kiếm tổng hợp không phân trang
+// Global search without pagination
 router.get('/all', globalSearchAll);
+
+// Search by title
+router.get('/title', searchByTitle);
+
+// Search by artist
+router.get('/artist', searchByArtist);
+
+// Search by lyrics
+router.get('/lyrics', searchByLyrics);
+
+// Search by genre
+router.get('/genre', searchByGenre);
 
 module.exports = router;

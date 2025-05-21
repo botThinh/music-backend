@@ -1,6 +1,7 @@
 const Artist = require('../models/Artist');
 const Song = require('../models/Song');
 const Album = require('../models/Album');
+const searchService = require('../services/searchService');
 
 // Global search across Artists, Songs, and Albums
 const globalSearch = async (req, res) => {
@@ -21,7 +22,7 @@ const globalSearch = async (req, res) => {
 
         // Tìm kiếm Artists
         const artistQuery = {
-            name: { $regex: q, $options: 'i' }, // Tìm kiếm không phân biệt hoa thường
+            name: { $regex: q, $options: 'i' },
         };
         const artists = await Artist.find(artistQuery)
             .skip(skip)
@@ -34,7 +35,7 @@ const globalSearch = async (req, res) => {
             {
                 $lookup: {
                     from: 'artists',
-                    localField: 'artists', // Dùng artists (mảng) thay vì artist
+                    localField: 'artists',
                     foreignField: '_id',
                     as: 'artist',
                 },
@@ -61,7 +62,7 @@ const globalSearch = async (req, res) => {
             {
                 $match: {
                     $and: [
-                        { status: 'public' }, // Chỉ lấy bài hát công khai
+                        { status: 'public' },
                         {
                             $or: [
                                 { title: { $regex: q, $options: 'i' } },
@@ -366,4 +367,111 @@ const globalSearchAll = async (req, res) => {
     }
 };
 
-module.exports = { globalSearch, globalSearchAll };
+// Tìm kiếm theo tên bài hát
+const searchByTitle = async (req, res) => {
+    try {
+        const { q, limit } = req.query;
+        if (!q) {
+            return res.status(400).json({
+                success: false,
+                error: 'Search query is required'
+            });
+        }
+
+        const songs = await searchService.searchByTitle(q, parseInt(limit) || 10);
+        res.json({
+            success: true,
+            data: songs,
+            total: songs.length
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+};
+
+// Tìm kiếm theo tên nghệ sĩ
+const searchByArtist = async (req, res) => {
+    try {
+        const { q, limit } = req.query;
+        if (!q) {
+            return res.status(400).json({
+                success: false,
+                error: 'Search query is required'
+            });
+        }
+
+        const artists = await searchService.searchByArtist(q, parseInt(limit) || 10);
+        res.json({
+            success: true,
+            data: artists,
+            total: artists.length
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+};
+
+// Tìm kiếm trong lyrics
+const searchByLyrics = async (req, res) => {
+    try {
+        const { q, limit } = req.query;
+        if (!q) {
+            return res.status(400).json({
+                success: false,
+                error: 'Search query is required'
+            });
+        }
+
+        const songs = await searchService.searchByLyrics(q, parseInt(limit) || 10);
+        res.json({
+            success: true,
+            data: songs,
+            total: songs.length
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+};
+
+// Tìm kiếm theo genre
+const searchByGenre = async (req, res) => {
+    try {
+        const { genre, limit } = req.query;
+        if (!genre) {
+            return res.status(400).json({
+                success: false,
+                error: 'Genre is required'
+            });
+        }
+
+        const songs = await searchService.searchByGenre(genre, parseInt(limit) || 10);
+        res.json({
+            success: true,
+            data: songs,
+            total: songs.length
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+};
+
+module.exports = {
+    globalSearch,
+    globalSearchAll,
+    searchByTitle,
+    searchByArtist,
+    searchByLyrics,
+    searchByGenre
+};
