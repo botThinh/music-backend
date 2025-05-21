@@ -68,6 +68,7 @@ const globalSearch = async (req, res) => {
                                 { 'artist.name': { $regex: q, $options: 'i' } },
                                 { 'album.title': { $regex: q, $options: 'i' } },
                                 { tags: { $regex: q, $options: 'i' } },
+                                { lyrics: { $regex: q, $options: 'i' } },
                             ],
                         },
                     ],
@@ -128,6 +129,7 @@ const globalSearch = async (req, res) => {
                                 { 'artist.name': { $regex: q, $options: 'i' } },
                                 { 'album.title': { $regex: q, $options: 'i' } },
                                 { tags: { $regex: q, $options: 'i' } },
+                                { lyrics: { $regex: q, $options: 'i' } },
                             ],
                         },
                     ],
@@ -232,4 +234,136 @@ const globalSearch = async (req, res) => {
     }
 };
 
-module.exports = { globalSearch };
+// Global search without pagination - returns all matching results
+const globalSearchAll = async (req, res) => {
+    const { q } = req.query;
+
+    if (!q) {
+        return res.status(400).json({ message: 'Search query is required' });
+    }
+
+    try {
+        // Tìm kiếm Artists
+        const artistQuery = {
+            name: { $regex: q, $options: 'i' },
+        };
+        const artists = await Artist.find(artistQuery).lean();
+
+        // Tìm kiếm Songs
+        const songPipeline = [
+            {
+                $lookup: {
+                    from: 'artists',
+                    localField: 'artists',
+                    foreignField: '_id',
+                    as: 'artist',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'albums',
+                    localField: 'album',
+                    foreignField: '_id',
+                    as: 'album',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: 'uploadedBy',
+                    foreignField: '_id',
+                    as: 'uploadedBy',
+                },
+            },
+            { $unwind: { path: '$artist', preserveNullAndEmptyArrays: true } },
+            { $unwind: { path: '$album', preserveNullAndEmptyArrays: true } },
+            { $unwind: { path: '$uploadedBy', preserveNullAndEmptyArrays: true } },
+            {
+                $match: {
+                    $and: [
+                        { status: 'public' },
+                        {
+                            $or: [
+                                { title: { $regex: q, $options: 'i' } },
+                                { 'artist.name': { $regex: q, $options: 'i' } },
+                                { 'album.title': { $regex: q, $options: 'i' } },
+                                { tags: { $regex: q, $options: 'i' } },
+                                { lyrics: { $regex: q, $options: 'i' } },
+                            ],
+                        },
+                    ],
+                },
+            },
+            {
+                $project: {
+                    title: 1,
+                    url: 1,
+                    thumbnail: 1,
+                    duration: 1,
+                    'artist.name': 1,
+                    'album.title': 1,
+                    'uploadedBy.username': 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    genres: 1,
+                    playCount: 1,
+                    likes: 1,
+                    releaseYear: 1,
+                    tags: 1,
+                    language: 1,
+                    lyrics: 1,
+                },
+            },
+        ];
+
+        const songs = await Song.aggregate(songPipeline).exec();
+
+        // Tìm kiếm Albums
+        const albumPipeline = [
+            {
+                $lookup: {
+                    from: 'artists',
+                    localField: 'artist',
+                    foreignField: '_id',
+                    as: 'artist',
+                },
+            },
+            { $unwind: { path: '$artist', preserveNullAndEmptyArrays: true } },
+            {
+                $match: {
+                    $or: [
+                        { title: { $regex: q, $options: 'i' } },
+                        { 'artist.name': { $regex: q, $options: 'i' } },
+                    ],
+                },
+            },
+            {
+                $project: {
+                    title: 1,
+                    cover: 1,
+                    releaseDate: 1,
+                    'artist.name': 1,
+                },
+            },
+        ];
+
+        const albums = await Album.aggregate(albumPipeline).exec();
+
+        // Trả về tất cả kết quả không phân trang
+        res.json({
+            artists,
+            songs,
+            albums,
+            total: {
+                artists: artists.length,
+                songs: songs.length,
+                albums: albums.length
+            }
+        });
+    } catch (error) {
+        console.error('Error in globalSearchAll:', error);
+        res.status(500).json({ message: error.message });
+    }
+};
+
+module.exports = { globalSearch, globalSearchAll };
